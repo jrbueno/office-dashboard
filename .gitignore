@@ -1,0 +1,11 @@
+# Upstream clone: its own git repo, plus private backups/diagnostics (flash images, credentials).
+/photo-frame-dashboard/
+# Tokens. deploy.sh writes secrets.js only to the frame; a local copy exists only while previewing.
+office/secrets.js
+designs/*/secrets.js
+# Personal config and notes (templates: config.example.js; public notes: CLAUDE.md).
+office/config.js
+designs/*/config.js
+CLAUDE.local.md
+hass/office-kiosk*.json
+.DS_Store
