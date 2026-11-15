@@ -4,7 +4,9 @@ A rooted PF1007L Android photo frame turned into a wall dashboard for Home Assis
 [wesbos/photo-frame-dashboard](https://github.com/wesbos/photo-frame-dashboard).
 
 - **Today**: clock, weather, outside vs inside air (e.g. Apollo AIR-1), Hacker News top 10, a camera,
-  room lights/fans/scenes/thermostat, and a desk-time coach (presence sensor, e.g. Aqara FP2).
+  room lights/fans/scenes/thermostat, and the next events from your Home Assistant calendars.
+- **Calendar**: your Home Assistant calendars in a month grid or a week of day columns (switch, arrows or swipe).
+- **News**: the whole Hacker News front page, by HN's own order, points or newest.
 - **Chores**: a Home Assistant to-do list; tap an item to complete it.
 - **Cameras**: snapshot grid; tap one for a live view.
 - **Home**: locks and garage (with confirmation), thermostats, blinds, NAS and leak status.

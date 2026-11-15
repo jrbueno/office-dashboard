@@ -18,7 +18,7 @@ Owner-specific facts (network, hostnames, entity choices, the frame's change log
 | `office/` | **Office HQ**, the dashboard the frame shows. Plain HTML/CSS/JS, no build step |
 | `office/config.example.js` | Template for `office/config.js` (git-ignored): HA URL, entities, names, cameras, dim hours |
 | `office/ha.js` | Minimal HA WebSocket client (auth, `subscribe_entities`, calls, subscriptions) |
-| `office/app.js` | Views: Today (Home HQ layout), Chores (to-do list), Cameras, Home. Time-of-day accent follows `sun.sun`. Confirm dialog before unlock / garage open |
+| `office/app.js` | Views: Today (Home HQ layout), Calendar (month / week), News (HN front page), Chores (to-do list), Cameras, Home. Time-of-day accent follows `sun.sun`. Confirm dialog before unlock / garage open |
 | `office/deploy.sh` | Pushes `office/` to the frame, writes `secrets.js` from the token file, restarts the kiosk |
 | `designs/tiles/` | Earlier pastel tile design (light/dark), kept for reference; see its README |
 | `hass/ha-ws.mjs` | Node HA WebSocket CLI using an **admin** token (`~/.config/hass-token`); URL from `$HASS_URL` or `office/config.js` |
@@ -40,7 +40,7 @@ image with Wi-Fi credentials and device identifiers).
 - `app.js` pattern per view: `build*()` writes the static DOM once; `render*()` redraws from `ha.states` on every
   `ha.onState` (some only when their entity is in `changed`); `load*()` fetches non-entity data (HA history,
   to-do items, snapshots, Hacker News, Open-Meteo). `tick()` runs every second and schedules the periodic loads
-  (news and outside air every 10 min, desk history every 5) and a full reload at 03:00.
+  (news, outside air and the calendar every 10 min) and a full reload at 03:00.
 - Clicks use one delegated listener per view, keyed on `data-*` attributes. Service calls go through `act()`,
   which toasts failures. Dangerous actions are wrapped in `confirmThen()`.
 - Code style is ES5-ish (`var`, `function`, string-built HTML through `esc()`) to stay safe on WebView 106.
@@ -50,8 +50,18 @@ image with Wi-Fi credentials and device identifiers).
 - Today follows the upstream **Home HQ** layout (paper + ink): header = clock · weather (now, summary, 6 hours) ·
   **air** (outside US AQI from Open-Meteo vs inside AQI computed from an indoor monitor's PM2.5 with EPA 2024
   breakpoints, plus CO₂ / VOC index / NOx index / humidity with research-based bands, see `app.js`); middle = Hacker
-  News top 10 (`hn.algolia.com`) · a camera; bottom = room controls · **desk-time coach** (presence-sensor desk-zone
-  history today, break nudge every `breakAfterMin`, CO₂ / lights-left-on tips).
+  News top 10 (see News below) · a camera; bottom = room controls · **up next** (the next
+  events from `calendars` via `calendar.get_events` with `return_response` over the socket; HA expands
+  repeats and timezones, so an ICS feed goes in as a Remote Calendar rather than being parsed on the frame. The big
+  slot is the next timed or future event; an all-day event already under way drops to the list).
+- **Calendar** view: every `calendars` entry, colour-coded. A Month / Week switch (sliding pill, remembered in
+  localStorage), ‹ Today › and swipe to page. Tap a day in the month to open its week. It fetches only the range on
+  screen. Multi-day events show their title on the first day (and Sundays) and a bar or "Continues" after that.
+  Up next's "Calendar ›" opens this month; tapping one of its events opens that week.
+- **News**: Algolia's `front_page` search (30 stories, one request) is sorted by *points*, not HN's order, so
+  `newsRankUrl` (HN Firebase `topstories.json`, GTS Root R1 cross-signed by GlobalSign like Algolia) supplies the
+  real rank. The News view's Front page / Points / Newest switch also orders the Today card (localStorage). Job
+  posts have no points or comments.
 - Apollo AIR-1 caveats: VOC/NOx are Sensirion *indices* (VOC 100 = room's recent average; NOx baseline 1), not ppm;
   the MiCS gas readings are presence-only; the AIR-1 temperature reads high from board heat, so room temperature and
   humidity come from a separate sensor.
@@ -79,7 +89,7 @@ cp office/config.example.js office/config.js && $EDITOR office/config.js
 office/deploy.sh
 adb -d exec-out screencap -p > /tmp/frame.png        # then view the PNG
 
-# Tap the frame (rail: Today 37,44 · Chores 37,116 · Cameras 37,188 · Home 37,260):
+# Tap the frame (rail: Today 37,44 · Calendar 37,116 · News 37,188 · Chores 37,260 · Cameras 37,332 · Home 37,404):
 adb -d shell input tap 37 188
 
 # Rebuild the kiosk APK (JDK 17 + Android SDK from Homebrew):

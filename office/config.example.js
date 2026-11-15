@@ -11,8 +11,10 @@ window.DASHBOARD_CONFIG = {
 
   weather: 'weather.home',
   place: 'Home',
-  // Hacker News front page via Algolia (CORS-enabled, GlobalSign root).
-  newsUrl: 'https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=10',
+  // Hacker News front page via Algolia (CORS-enabled, GlobalSign root): stories with points and comments.
+  newsUrl: 'https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30',
+  // HN's own front-page order (Firebase, same GlobalSign-signed chain). Leave out to order by points only.
+  newsRankUrl: 'https://hacker-news.firebaseio.com/v0/topstories.json',
 
   // Header: outside air (Open-Meteo, plain HTTP; location from HA) vs an indoor air monitor (e.g. Apollo AIR-1).
   air: {
@@ -43,11 +45,15 @@ window.DASHBOARD_CONFIG = {
   },
   todayCamera: 'camera.front_door',
 
-  // Bottom right: desk-time coach from a presence sensor's desk zone (e.g. Aqara FP2).
-  desk: {
-    presence: 'binary_sensor.desk_presence',
-    breakAfterMin: 50,
-  },
+  // Calendars for the Calendar view (month / week) and Today's bottom-right "Up next". Any HA calendar works;
+  // an ICS feed goes in as a Remote Calendar. color = chip and dot colour (6-digit hex).
+  calendars: [
+    { entity: 'calendar.family', name: 'Family', color: '#E8A33D' },
+    { entity: 'calendar.school', name: 'School', color: '#2FA36B' },
+  ],
+  // Up next: how many days ahead to look and how many events to show.
+  agenda: { days: 14, max: 4 },
+
 
   // Chores view
   todo: 'todo.chores',

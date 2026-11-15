@@ -13,6 +13,12 @@
       <button class="rail-item is-active" data-go="today">
         <svg class="i" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg><span>Today</span>
       </button>
+      <button class="rail-item" data-go="calendar">
+        <svg class="i" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 17.5h.01M12 17.5h.01"/></svg><span>Calendar</span>
+      </button>
+      <button class="rail-item" data-go="news">
+        <svg class="i" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h13v16H6a2 2 0 0 1-2-2z"/><path d="M17 8h3v10a2 2 0 0 1-2 2"/><path d="M7.5 8h6M7.5 12h6M7.5 16h4"/></svg><span>News</span>
+      </button>
       <button class="rail-item" data-go="chores">
         <svg class="i" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7.5 12l3 3 6-6"/></svg><span>Chores</span>
       </button>
@@ -28,6 +34,8 @@
 
     <main class="views">
       <section class="view is-active" id="view-today"></section>
+      <section class="view" id="view-calendar"></section>
+      <section class="view" id="view-news"></section>
       <section class="view" id="view-chores"></section>
       <section class="view" id="view-cameras"></section>
       <section class="view" id="view-home"></section>

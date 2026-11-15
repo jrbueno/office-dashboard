@@ -130,6 +130,7 @@
     var views = document.querySelectorAll('.view');
     for (var j = 0; j < views.length; j++) views[j].className = 'view' + (views[j].id === 'view-' + view ? ' is-active' : '');
     if (view === 'chores') loadTodo();
+    if (view === 'calendar') loadCal();
     refreshSnapshots(true);
   }
   $('rail').addEventListener('click', function (e) {
@@ -150,7 +151,8 @@
       '<div class="t-clock" id="tClock"></div>' +
       '<div class="t-weather" id="tWeather"></div>' +
       '<div class="t-air" id="tAir"></div>' +
-      '<div class="card t-news"><div class="hn-bar"><span class="hn-y">Y</span><b>Hacker News</b><span>top 10</span><small id="newsAge"></small></div>' +
+      '<div class="card t-news"><div class="hn-bar"><span class="hn-y">Y</span><b>Hacker News</b><span id="newsLabel">top 10</span><small id="newsAge"></small>' +
+        '<button class="hn-more" data-go="news">All stories ›</button></div>' +
         '<div class="news-list" id="newsList"><div class="news-empty">Loading headlines…</div></div></div>' +
       '<button class="t-cam" data-cam="' + cfg.todayCamera + '"><img data-snap="' + cfg.todayCamera + '" alt="">' +
         '<div class="cam-cap"><b>' + esc(camName(cfg.todayCamera)) + '</b><span data-age="' + cfg.todayCamera + '"></span></div></button>' +
@@ -162,7 +164,7 @@
             '<button class="round" data-step="-1">–</button><span class="v num" data-target="' + th.entity + '">–</span>' +
             '<button class="round" data-step="1">+</button></div>' : '') +
         '</div></div>' +
-      '<div class="t-desk" id="tDesk"></div>' +
+      '<div class="t-agenda" id="tAgenda"></div>' +
       '</div>';
   }
 
@@ -251,14 +253,39 @@
   }
 
   // ---- hacker news
+  // Up to 30 front-page stories from Algolia (one request, with points and comments). Algolia returns them by
+  // points; HN's own order comes from its Firebase top-stories list, so each story gets a .rank from there.
   var news = [];
+  var newsRanked = false;
+  var newsAt = null;
+  var NEWS_SORTS = { rank: 'front page', points: 'most points', 'new': 'newest' };
+  var newsSort = 'rank';
+  try { var ns = localStorage.getItem('newsSort'); if (NEWS_SORTS[ns]) newsSort = ns; } catch (e) { /* default */ }
   function loadNews() {
     if (!cfg.newsUrl) return;
-    getJSON(cfg.newsUrl).then(function (j) {
-      news = (j.hits || []).slice(0, 10);
+    var rankP = cfg.newsRankUrl ? getJSON(cfg.newsRankUrl).catch(function () { return null; }) : Promise.resolve(null);
+    Promise.all([getJSON(cfg.newsUrl), rankP]).then(function (res) {
+      var ids = res[1] || [];
+      newsRanked = ids.length > 0;
+      news = (res[0].hits || []).map(function (h) {
+        var r = ids.indexOf(+h.objectID);
+        h.rank = r < 0 ? 9999 : r + 1;
+        return h;
+      });
+      newsAt = new Date();
       renderNews();
     }).catch(function (e) {
-      if (!news.length) $('newsList').innerHTML = '<div class="news-empty">Headlines unavailable (' + esc(e.message) + ').</div>';
+      if (news.length) return;
+      var msg = '<div class="news-empty">Headlines unavailable (' + esc(e.message) + ').</div>';
+      $('newsList').innerHTML = msg;
+      if ($('nvList')) $('nvList').innerHTML = msg;
+    });
+  }
+  function sortedNews() {
+    // Without HN's list (it failed to load), "front page" falls back to points.
+    var mode = newsSort === 'rank' && !newsRanked ? 'points' : newsSort;
+    return news.slice().sort(function (a, b) {
+      return mode === 'rank' ? a.rank - b.rank : mode === 'new' ? b.created_at_i - a.created_at_i : (b.points || 0) - (a.points || 0);
     });
   }
   function host(url) {
@@ -269,14 +296,41 @@
     var m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
     return m < 60 ? m + 'm' : Math.round(m / 60) + 'h';
   }
+  function newsItem(n, i) {
+    return '<div class="news-i"><span class="news-n num">' + (i + 1) + '</span><div class="news-t"><b>' + esc(n.title) + '</b>' +
+      // Job posts carry no points or comments.
+      '<span>' + (n.points != null ? '<em>' + n.points + ' pts</em> · ' : '<em>job</em> · ') + esc(host(n.url)) +
+      (n.num_comments != null ? ' · ' + n.num_comments + ' comments' : '') + ' · ' + ago(n.created_at) + '</span></div></div>';
+  }
   function renderNews() {
     if (!news.length) return;
-    $('newsList').innerHTML = news.map(function (n, i) {
-      return '<div class="news-i"><span class="news-n num">' + (i + 1) + '</span><div class="news-t"><b>' + esc(n.title) + '</b>' +
-        '<span><em>' + n.points + ' pts</em> · ' + esc(host(n.url)) + ' · ' + n.num_comments + ' comments · ' + ago(n.created_at) + '</span></div></div>';
-    }).join('');
-    $('newsAge').textContent = 'updated ' + clockText(new Date());
+    var list = sortedNews();
+    var label = NEWS_SORTS[newsSort === 'rank' && !newsRanked ? 'points' : newsSort];
+    $('newsList').innerHTML = list.slice(0, 10).map(newsItem).join('');
+    $('newsLabel').textContent = label;
+    $('newsAge').textContent = 'updated ' + clockText(newsAt);
+    if (!$('nvList')) return;
+    $('nvSwitch').className = 'news-switch is-' + newsSort;
+    $('nvLabel').textContent = list.length + ' stories · ' + label;
+    $('nvAge').textContent = 'updated ' + clockText(newsAt);
+    $('nvList').innerHTML = list.map(newsItem).join('');
   }
+
+  // ---- news view: the whole front page, with a Front page / Points / Newest switch (also orders the Today card)
+  function buildNewsView() {
+    $('view-news').innerHTML = '<div class="news-page">' +
+      '<div class="hn-bar big"><span class="hn-y">Y</span><b>Hacker News</b><span id="nvLabel"></span>' +
+        '<div class="news-switch" id="nvSwitch"><i class="knob"></i><button data-sort="rank">Front page</button><button data-sort="points">Points</button><button data-sort="new">Newest</button></div>' +
+        '<small id="nvAge"></small></div>' +
+      '<div class="news-list big" id="nvList"><div class="news-empty">Loading headlines…</div></div></div>';
+  }
+  $('view-news').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-sort]');
+    if (!b) return;
+    newsSort = b.getAttribute('data-sort');
+    try { localStorage.setItem('newsSort', newsSort); } catch (err) { /* fine */ }
+    renderNews();
+  });
 
   // ---- room
   function renderRoom() {
@@ -303,65 +357,248 @@
     if (r.thermostat) renderThermo(r.thermostat.entity);
   }
 
-  // ---- desk coach (FP2 desk zone history + live state)
-  var deskSpans = [];   // [startMs, endMs|null] for today
-  function midnight() { var d = new Date(); d.setHours(0, 0, 0, 0); return d; }
-  function loadDesk() {
-    if (!cfg.desk || !ha.connected) return;
-    var start = midnight();
-    ha.call('history/history_during_period', {
-      start_time: start.toISOString(), entity_ids: [cfg.desk.presence], minimal_response: true, no_attributes: true
+  // ------------------------------------------------------------------ calendars (shared)
+  // calendar.get_events over the socket: HA expands repeats and timezones (an ICS feed goes in as a Remote Calendar).
+  var SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var DAY_MS = 864e5;
+  function midnight(d) { d = d ? new Date(d.getTime()) : new Date(); d.setHours(0, 0, 0, 0); return d; }
+  function addDays(d, n) { var x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; }
+  function calList() { return cfg.calendars || []; }
+  function calColor(i) { var c = calList()[i]; return (c && c.color) || '#8C877C'; }
+  function tint(hex, a) {
+    var n = parseInt(hex.slice(1), 16);
+    return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+  // All-day events come as 'YYYY-MM-DD' (end exclusive); timed ones as ISO with an offset.
+  function evDate(v) {
+    if (v.indexOf('T') < 0) { var p = v.split('-'); return new Date(+p[0], p[1] - 1, +p[2]); }
+    return new Date(v);
+  }
+  function fetchEvents(start, end) {
+    var cals = calList();
+    if (!cals.length) return Promise.resolve([]);
+    if (!ha.connected) return Promise.reject(new Error('not connected'));
+    return ha.call('call_service', {
+      domain: 'calendar', service: 'get_events', return_response: true,
+      target: { entity_id: cals.map(function (c) { return c.entity; }) },
+      service_data: { start_date_time: start.toISOString(), end_date_time: end.toISOString() }
     }).then(function (r) {
-      var rows = r[cfg.desk.presence] || [];
-      var spans = [];
-      var open = null;
-      rows.forEach(function (row) {
-        var t = Math.max(start.getTime(), (row.lu || row.lc || 0) * 1000);
-        if (row.s === 'on' && open == null) open = t;
-        if (row.s !== 'on' && open != null) { spans.push([open, t]); open = null; }
+      var resp = (r && r.response) || {};
+      var list = [];
+      cals.forEach(function (c, ci) {
+        ((resp[c.entity] || {}).events || []).forEach(function (ev) {
+          list.push({ s: evDate(ev.start), e: evDate(ev.end), allDay: ev.start.indexOf('T') < 0,
+            title: ev.summary || '(no title)', where: ev.location || '', cal: ci });
+        });
       });
-      if (open != null) spans.push([open, null]);
-      deskSpans = spans;
-      renderDesk();
-    }).catch(function () { /* keep the last spans */ });
+      // By start; on the same day, all-day events first.
+      list.sort(function (a, b) { return a.s - b.s || (b.allDay - a.allDay); });
+      return list;
+    });
   }
-  function onDeskChange() {
-    var s = st(cfg.desk.presence);
-    if (!s) return;
-    var last = deskSpans[deskSpans.length - 1];
-    var openSpan = last && last[1] == null;
-    if (s.state === 'on' && !openSpan) deskSpans.push([Date.now(), null]);
-    if (s.state !== 'on' && openSpan) last[1] = Date.now();
-    renderDesk();
+  function onDay(list, day) {
+    var next = addDays(day, 1);
+    return list.filter(function (ev) { return ev.s < next && ev.e > day; });
   }
-  function renderDesk() {
-    var el = $('tDesk');
-    if (!el || !cfg.desk) return;
-    var now = Date.now();
-    var total = 0;
-    deskSpans.forEach(function (sp) { total += ((sp[1] || now) - sp[0]) / 60000; });
-    var last = deskSpans[deskSpans.length - 1];
-    var sitting = last && last[1] == null;
-    var session = sitting ? (now - last[0]) / 60000 : 0;
-    var away = !sitting && last ? (now - last[1]) / 60000 : null;
-    var brk = cfg.desk.breakAfterMin;
-    var pct = Math.min(100, session / brk * 100);
-    var co2 = num(cfg.air.co2);
-    var desk = st(cfg.room.tiles[0].entity);
-    var tip;
-    if (sitting && session >= brk) tip = 'Time to <i>stand up and stretch.</i>';
-    else if (co2 != null && co2 >= 1000) tip = 'CO₂ is at ' + Math.round(co2) + '. <i>Crack a window.</i>';
-    else if (!sitting && desk && desk.state === 'on' && away != null && away > 15) tip = 'Desk light is on, <i>nobody’s here.</i>';
-    else if (sitting) tip = 'Focus block. <i>Break at ' + clockText(new Date(last[0] + brk * 60000)) + '.</i>';
-    else tip = total > 0 ? 'Nice. <i>' + deskSpans.length + ' sitting' + (deskSpans.length === 1 ? '' : 's') + ' so far today.</i>' : 'Desk is free. <i>Fresh start.</i>';
-    el.innerHTML = '<div class="label">Desk time · today</div>' +
-      '<div class="desk-row"><span class="desk-big num">' + dur(total) + '</span>' +
-        '<span class="desk-sub">' + (sitting ? 'This sitting <b>' + dur(session) + '</b>' : away != null ? 'Away for <b>' + dur(away) + '</b>' : 'Not at the desk yet') +
-        '<br>Break every <b>' + brk + ' min</b></span></div>' +
-      '<div class="desk-bar"><i class="' + (pct >= 100 ? 'warn' : '') + '" style="width:' + pct + '%"></i></div>' +
-      '<div class="desk-tip">' + tip + '</div>';
+  function spanDays(ev) { return Math.round((midnight(ev.e) - midnight(ev.s)) / DAY_MS); }
+  function dayDiff(d) { return Math.round((midnight(d) - midnight()) / DAY_MS); }
+  function dayLabel(d, long) {
+    var n = dayDiff(d);
+    if (n <= 0) return 'Today';
+    if (n === 1) return long ? 'Tomorrow' : 'Tmrw';
+    return SHORT_DAYS[d.getDay()] + ' ' + (long && n > 6 ? MONTHS[d.getMonth()].slice(0, 3) + ' ' : '') + d.getDate();
+  }
+  function timeText(d) { return clockText(d) + (cfg.clock24h ? '' : ' ' + ampm(d.getHours())); }
+  // Compact time for calendar chips: 9a, 3:30p (or 09:00 / 15:30).
+  function timeShort(d) {
+    if (cfg.clock24h) return pad(d.getHours()) + ':' + pad(d.getMinutes());
+    return hour12(d.getHours()) + (d.getMinutes() ? ':' + pad(d.getMinutes()) : '') + (d.getHours() < 12 ? 'a' : 'p');
+  }
+  function allDayText(ev, now) {
+    var n = spanDays(ev);
+    if (n <= 1) return 'All day';
+    return ev.s <= now ? 'Until ' + SHORT_DAYS[addDays(ev.e, -1).getDay()] : n + ' days';
+  }
+  function legend(cls) {
+    return calList().length < 2 ? '' : '<span class="' + cls + '">' + calList().map(function (c, i) {
+      return '<span><i style="background:' + esc(calColor(i)) + '"></i>' + esc(c.name) + '</span>';
+    }).join('') + '</span>';
   }
 
+  // ---- up next (Today, bottom right)
+  var agenda = null;   // null until the first load
+  var agendaErr = '';
+  function loadAgenda() {
+    if (!calList().length || !ha.connected) return;
+    var start = midnight();
+    fetchEvents(start, addDays(start, (cfg.agenda && cfg.agenda.days) || 14)).then(function (list) {
+      agenda = list; agendaErr = ''; renderAgenda();
+    }).catch(function (e) {
+      if (agenda == null) { agenda = []; agendaErr = e.message; renderAgenda(); }
+    });
+  }
+  function heroWhen(ev, now) {
+    if (ev.s <= now) return '<b>Now</b> · until ' + timeText(ev.e);
+    var min = (ev.s - now) / 60000;
+    if (ev.allDay) return '<b>' + dayLabel(ev.s, true) + '</b> · ' + allDayText(ev, now).toLowerCase();
+    if (min < 180) return '<b>In ' + dur(min) + '</b> · ' + timeText(ev.s);
+    return '<b>' + dayLabel(ev.s, true) + '</b> · ' + timeText(ev.s);
+  }
+  function calDot(ev) {
+    return calList().length > 1 ? '<i class="ag-dot" style="background:' + esc(calColor(ev.cal)) + '"></i>' : '';
+  }
+  function renderAgenda() {
+    var el = $('tAgenda');
+    if (!el || !calList().length) return;
+    var A = cfg.agenda || {};
+    var now = new Date();
+    var head = '<div class="ag-head"><span class="label">Up next</span>' + legend('ag-legend') + '<button class="ag-more" data-calday="month">Calendar ›</button></div>';
+    if (agenda == null) { el.innerHTML = head + '<div class="ag-empty">Loading calendar…</div>'; return; }
+    if (agendaErr) { el.innerHTML = head + '<div class="ag-empty">Calendar unavailable<small>' + esc(agendaErr) + '</small></div>'; return; }
+    var live = agenda.filter(function (ev) { return ev.e > now; });
+    if (!live.length) { el.innerHTML = head + '<div class="ag-empty">Nothing in the next ' + (A.days || 14) + ' days.</div>'; return; }
+    // The big slot goes to the next thing that happens at a time, not an all-day event already under way.
+    var hi = -1;
+    for (var i = 0; i < live.length; i++) { if (!(live[i].allDay && live[i].s <= now)) { hi = i; break; } }
+    var hero = hi >= 0 ? live[hi] : null;
+    var rest = live.filter(function (ev, j) { return j !== hi; }).slice(0, (A.max || 4) - (hero ? 1 : 0));
+    var soon = hero && !hero.allDay && hero.s > now && hero.s - now < 15 * 60000;
+    el.innerHTML = head +
+      (hero ? '<button class="ag-hero' + (soon ? ' soon' : '') + '" data-calday="' + midnight(hero.s).getTime() + '"><div class="ag-when">' + heroWhen(hero, now) + (hero.where ? ' · ' + esc(hero.where.split(',')[0]) : '') + '</div>' +
+        '<div class="ag-title">' + calDot(hero) + esc(hero.title) + '</div></button>' : '') +
+      '<div class="ag-rows">' + rest.map(function (ev) {
+        var ongoing = ev.s <= now;
+        return '<button class="ag-row" data-calday="' + midnight(ongoing ? now : ev.s).getTime() + '"><span class="ag-day' + (dayDiff(ev.s) <= 0 || ongoing ? ' is-today' : '') + '">' + (ongoing ? 'Today' : dayLabel(ev.s)) + '</span>' +
+          '<span class="ag-time num">' + (ev.allDay ? allDayText(ev, now) : timeText(ev.s)) + '</span>' +
+          '<span class="ag-name">' + calDot(ev) + esc(ev.title) + '</span></button>';
+      }).join('') + '</div>';
+  }
+
+  // ---- calendar view (month grid, or a week of day columns; the switch slides between them)
+  var calMode = 'month';
+  try { calMode = localStorage.getItem('calMode') === 'week' ? 'week' : 'month'; } catch (e) { /* default */ }
+  var calAnchor = midnight();
+  var calEvents = null;   // events for the range on screen
+  var calKey = '';
+  function calRange() {
+    if (calMode === 'week') { var w = addDays(calAnchor, -calAnchor.getDay()); return [w, addDays(w, 7)]; }
+    var first = new Date(calAnchor.getFullYear(), calAnchor.getMonth(), 1);
+    var start = addDays(first, -first.getDay());
+    var days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    return [start, addDays(start, Math.ceil((first.getDay() + days) / 7) * 7)];
+  }
+  function buildCalendar() {
+    $('view-calendar').innerHTML = '<div class="cal">' +
+      '<div class="cal-head"><div class="cal-title" id="calTitle"></div>' + legend('cal-legend') +
+        '<div class="cal-switch" id="calSwitch"><i class="knob"></i><button data-mode="month">Month</button><button data-mode="week">Week</button></div>' +
+        '<button class="round" data-nav="-1">‹</button><button class="btn cal-today" data-nav="0">Today</button><button class="round" data-nav="1">›</button></div>' +
+      '<div class="cal-body" id="calBody"></div></div>';
+  }
+  function loadCal() {
+    var r = calRange();
+    var key = calMode + r[0].getTime();
+    if (key !== calKey) { calKey = key; calEvents = null; renderCal(); }
+    fetchEvents(r[0], r[1]).then(function (list) {
+      if (key !== calKey) return;   // the user moved on while this loaded
+      calEvents = list; renderCal();
+    }).catch(function (e) {
+      if (key === calKey && calEvents == null) $('calBody').innerHTML = '<div class="cal-msg">Calendar unavailable<small>' + esc(e.message) + '</small></div>';
+    });
+  }
+  function chip(ev, day) {
+    var col = calColor(ev.cal);
+    if (ev.allDay) {
+      // A multi-day event shows its title on its first day (and each Sunday); the other days get a bar.
+      var first = ev.s >= day || day.getDay() === 0;
+      return '<div class="chip all" style="background:' + tint(col, 0.22) + ';border-left-color:' + col + '">' + (first ? esc(ev.title) : '&nbsp;') + '</div>';
+    }
+    // A timed event carried over from an earlier day (a trip, a rental) reads as a bar, not a new start time.
+    if (ev.s < day) return '<div class="chip all" style="background:' + tint(col, 0.12) + ';border-left-color:' + col + '">↳ ' + esc(ev.title) + '</div>';
+    return '<div class="chip"><i style="background:' + col + '"></i><b>' + timeShort(ev.s) + '</b> ' + esc(ev.title) + '</div>';
+  }
+  function renderCal() {
+    var el = $('calBody');
+    if (!el) return;
+    var sw = $('calSwitch');
+    sw.className = 'cal-switch is-' + calMode;
+    var r = calRange();
+    var today = midnight();
+    var a = calAnchor;
+    if (calMode === 'month') {
+      $('calTitle').innerHTML = MONTHS[a.getMonth()] + ' <i>' + a.getFullYear() + '</i>';
+    } else {
+      var last = addDays(r[1], -1);
+      $('calTitle').innerHTML = MONTHS[r[0].getMonth()].slice(0, 3) + ' ' + r[0].getDate() + ' – ' +
+        (last.getMonth() !== r[0].getMonth() ? MONTHS[last.getMonth()].slice(0, 3) + ' ' : '') + last.getDate() + ' <i>' + last.getFullYear() + '</i>';
+    }
+    var list = calEvents || [];
+    var heads = SHORT_DAYS.map(function (d) { return '<div class="cal-dow">' + d + '</div>'; }).join('');
+    var html = '';
+    if (calMode === 'month') {
+      var weeks = Math.round((r[1] - r[0]) / DAY_MS / 7);
+      var maxChips = weeks > 5 ? 3 : 4;
+      for (var d = r[0]; d < r[1]; d = addDays(d, 1)) {
+        var evs = onDay(list, d);
+        var shown = evs.slice(0, evs.length > maxChips ? maxChips - 1 : maxChips);
+        html += '<button class="cal-cell' + (d.getMonth() !== a.getMonth() ? ' out' : '') + (+d === +today ? ' is-today' : '') +
+          (d.getDay() === 0 || d.getDay() === 6 ? ' wkend' : '') + '" data-day="' + d.getTime() + '"><span class="cal-n num">' + d.getDate() + '</span>' +
+          shown.map(function (ev) { return chip(ev, d); }).join('') +
+          (evs.length > shown.length ? '<div class="chip more">+' + (evs.length - shown.length) + ' more</div>' : '') + '</button>';
+      }
+      el.className = 'cal-body month';
+      el.innerHTML = '<div class="cal-dows">' + heads + '</div><div class="cal-grid" style="grid-template-rows:repeat(' + weeks + ',1fr)">' + html + '</div>';
+    } else {
+      var now = new Date();
+      for (var w = r[0]; w < r[1]; w = addDays(w, 1)) {
+        var dayEvs = onDay(list, w);
+        html += '<div class="wk-col' + (+w === +today ? ' is-today' : '') + (w < today ? ' past' : '') + '">' +
+          '<div class="wk-head"><span>' + SHORT_DAYS[w.getDay()] + '</span><b class="num">' + w.getDate() + '</b></div><div class="wk-list">' +
+          (dayEvs.length ? dayEvs.map(function (ev) {
+            var col = calColor(ev.cal);
+            if (ev.allDay) return '<div class="wk-ev all" style="background:' + tint(col, 0.22) + ';border-left-color:' + col + '">' + esc(ev.title) + '</div>';
+            // Times that fall on another day name that day: "7p–Sun 4:25p", "Continues · until 4:25p".
+            var endTxt = (ev.e <= addDays(w, 1) ? '' : SHORT_DAYS[ev.e.getDay()] + ' ') + timeShort(ev.e);
+            var when = ev.s < w ? 'Continues · until ' + endTxt : timeShort(ev.s) + '–' + endTxt;
+            return '<div class="wk-ev' + (ev.e <= now ? ' done' : '') + (ev.s < w ? ' cont' : '') + '" style="border-left-color:' + col + '"><small class="num">' + when + '</small>' +
+              esc(ev.title) + (ev.where ? '<em>' + esc(ev.where.split(',')[0]) + '</em>' : '') + '</div>';
+          }).join('') : '<div class="wk-none">—</div>') + '</div></div>';
+      }
+      el.className = 'cal-body week';
+      el.innerHTML = '<div class="wk">' + html + '</div>';
+    }
+    if (calEvents == null) el.className += ' loading';
+  }
+  function calSetMode(mode) {
+    calMode = mode;
+    try { localStorage.setItem('calMode', mode); } catch (e) { /* fine */ }
+    loadCal();
+  }
+  function calStep(n) {
+    if (n === 0) calAnchor = midnight();
+    else if (calMode === 'week') calAnchor = addDays(calAnchor, 7 * n);
+    else calAnchor = new Date(calAnchor.getFullYear(), calAnchor.getMonth() + n, 1);
+    loadCal();
+  }
+  $('view-calendar').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    var mode = b.getAttribute('data-mode');
+    if (mode) { if (mode !== calMode) calSetMode(mode); return; }
+    var nav = b.getAttribute('data-nav');
+    if (nav != null) { calStep(+nav); return; }
+    // Tapping a day in the month opens its week.
+    var day = b.getAttribute('data-day');
+    if (day) { calAnchor = new Date(+day); calSetMode('week'); }
+  });
+  // Swipe left/right on the calendar for next/previous.
+  var swipeX = null;
+  $('view-calendar').addEventListener('touchstart', function (e) { swipeX = e.touches[0].clientX; }, { passive: true });
+  $('view-calendar').addEventListener('touchend', function (e) {
+    if (swipeX == null) return;
+    var dx = e.changedTouches[0].clientX - swipeX;
+    swipeX = null;
+    if (Math.abs(dx) > 80) calStep(dx < 0 ? 1 : -1);
+  }, { passive: true });
   // ------------------------------------------------------------------ thermostats (shared)
   var pendingTemp = {};
   var tempTimers = {};
@@ -395,6 +632,16 @@
   $('view-today').addEventListener('click', function (e) {
     var t = e.target.closest('button');
     if (!t) return;
+    var to = t.getAttribute('data-go');
+    if (to) { go(to); return; }
+    var calDay = t.getAttribute('data-calday');
+    if (calDay) {
+      // "Calendar ›" opens this month; an Up next event opens its week.
+      calAnchor = calDay === 'month' ? midnight() : new Date(+calDay);
+      calMode = calDay === 'month' ? 'month' : 'week';
+      go('calendar');
+      return;
+    }
     var tog = t.getAttribute('data-toggle');
     if (tog) {
       t.className += ' busy';
@@ -697,10 +944,8 @@
       renderClock(now);
       renderSky();
       renderWeather();
-      renderDesk();
-      if (lastMinute % 10 === 0) { loadNews(); loadOutside(); }
-      if (lastMinute % 5 === 0) loadDesk();
-      if (h === 0 && lastMinute === 0) deskSpans = [];
+      renderAgenda();
+      if (lastMinute % 10 === 0) { loadNews(); loadOutside(); loadAgenda(); if (current === 'calendar') loadCal(); }
     }
     // Fresh page once a day at 3:00, to keep a long-running WebView lean.
     if (h === 3 && now.getMinutes() === 0 && now.getSeconds() < 2 && performance.now() > 120000) location.reload();
@@ -710,9 +955,8 @@
   function watched() {
     var r = cfg.room;
     var A = cfg.air;
-    var ids = [cfg.weather, 'sun.sun', cfg.todo, r.temperature, r.thermostat && r.thermostat.entity, A.pm25, A.co2, A.voc, A.nox, A.humidity,
-      cfg.desk && cfg.desk.presence];
-    [r.tiles, cfg.cameras, cfg.locks, cfg.thermostats, cfg.homeCovers, cfg.status].forEach(function (list) {
+    var ids = [cfg.weather, 'sun.sun', cfg.todo, r.temperature, r.thermostat && r.thermostat.entity, A.pm25, A.co2, A.voc, A.nox, A.humidity];
+    [r.tiles, calList(), cfg.cameras, cfg.locks, cfg.thermostats, cfg.homeCovers, cfg.status].forEach(function (list) {
       list.forEach(function (x) { ids.push(x.entity); });
     });
     if (cfg.garage) ids.push(cfg.garage.entity);
@@ -728,7 +972,8 @@
     renderRoom();
     renderAir();
     renderHome();
-    if (cfg.desk && changed.indexOf(cfg.desk.presence) >= 0) onDeskChange();
+    // A calendar entity's state flips when an event starts or ends: refetch so the list moves on.
+    if (calList().some(function (c) { return changed.indexOf(c.entity) >= 0; })) { loadAgenda(); if (current === 'calendar') loadCal(); }
     if (changed.indexOf(cfg.weather) >= 0) renderWeather();
     if (changed.indexOf('sun.sun') >= 0) renderSky();
     var todo = st(cfg.todo);
@@ -738,7 +983,7 @@
   });
   ha.onConnect(function () {
     ha.call('get_config').then(function (c) { home = c; loadOutside(); }).catch(function () {});
-    loadDesk();
+    loadAgenda();
     ha.subscribe({ type: 'weather/subscribe_forecast', entity_id: cfg.weather, forecast_type: 'daily' }, function (ev) {
       daily = ev.forecast || [];
       renderWeather();
@@ -750,11 +995,13 @@
   });
 
   buildToday();
+  buildCalendar();
+  buildNewsView();
   buildChores();
   buildCameras();
   buildHome();
   renderAir();
-  renderDesk();
+  renderAgenda();
   tick();
   loadNews();
   setInterval(tick, 1000);
